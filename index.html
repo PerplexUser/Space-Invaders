@@ -1,0 +1,574 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Space Invaders</title>
+  <meta name="theme-color" content="#000000">
+  <style>
+    :root {
+      --bg0: #02030a;
+      --bg1: #0b0f1e;
+      --fg:  #e9eef7;
+      --accent: #64f4ac;
+      --danger: #ff6b6b;
+      --canvas-w: 800px;
+      --canvas-h: 600px;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      background: radial-gradient(1200px 700px at 50% -10%, #0f1833, var(--bg0));
+      color: var(--fg);
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+      display: grid;
+      place-items: center;
+      user-select: none;
+    }
+    .wrap {
+      position: relative;
+      display: grid;
+      gap: 10px;
+      justify-items: center;
+    }
+    canvas {
+      width: min(92vw, var(--canvas-w));
+      height: calc(min(92vw, var(--canvas-w)) * 0.75);
+      max-height: min(92vh, var(--canvas-h));
+      background: #000;
+      border: 1px solid #1f2741;
+      box-shadow: 0 20px 60px rgba(0,0,0,.6), inset 0 0 40px rgba(16,32,96,.35);
+      image-rendering: pixelated;
+      border-radius: 12px;
+    }
+    .hud {
+      display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+      font-size: 14px; opacity: .9;
+      justify-content: center;
+    }
+    .hud .pill {
+      background: linear-gradient(180deg, #0e1733, #0a1024);
+      border: 1px solid #1c2546;
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,.03);
+      padding: 6px 10px; border-radius: 999px;
+    }
+    .btn {
+      cursor: pointer; padding: 8px 14px; border-radius: 10px; border: 1px solid #22305c; color: var(--fg);
+      background: linear-gradient(180deg, #1a2550, #141a34);
+      box-shadow: 0 6px 18px rgba(0,0,0,.35), inset 0 0 0 1px rgba(255,255,255,.04);
+      font-weight: 600; letter-spacing: .2px;
+    }
+    .btn:hover { filter: brightness(1.08); }
+    .btn:active { transform: translateY(1px); }
+
+    .overlay {
+      pointer-events: none;
+      position: absolute; inset: 0; display: grid; place-items: center;
+      border-radius: 12px;
+    }
+    .panel {
+      pointer-events: auto;
+      width: min(90%, 520px);
+      background: linear-gradient(180deg, rgba(10,14,32,.9), rgba(8,12,24,.92));
+      border: 1px solid #2a396c;
+      border-radius: 16px; padding: 22px;
+      text-align: center;
+      box-shadow: 0 20px 60px rgba(0,0,0,.55), inset 0 0 0 1px rgba(255,255,255,.04);
+      animation: pop .32s ease-out;
+    }
+    @keyframes pop { from { transform: scale(.96); opacity: 0; } }
+    .title { font-size: 28px; margin: 0 0 10px; letter-spacing: .6px; }
+    .subtitle { opacity: .85; margin: 0 0 14px; }
+    kbd { background:#11162d; border:1px solid #22305c; border-bottom-width:2px; border-radius:6px; padding:2px 6px; font-weight:700; box-shadow: inset 0 0 0 1px rgba(255,255,255,.03); }
+    .small { font-size: 12px; opacity: .8; }
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <canvas id="game" width="800" height="600" aria-label="Space Invaders game area"></canvas>
+    <div class="hud" role="group" aria-label="Game HUD">
+      <div class="pill" id="scorePill">Score: <strong id="score">0</strong></div>
+      <div class="pill">Lives: <strong id="lives">3</strong></div>
+      <div class="pill">Level: <strong id="level">1</strong></div>
+      <button class="btn" id="muteBtn" aria-pressed="false" title="Toggle sound (M)">🔊 Sound</button>
+      <button class="btn" id="pauseBtn" title="Pause (P)">⏸️ Pause</button>
+      <button class="btn" id="restartBtn" title="Restart (R)">🔁 Restart</button>
+    </div>
+
+    <div class="overlay" id="overlay">
+      <div class="panel" id="startPanel">
+        <h1 class="title">SPACE INVADERS</h1>
+        <p class="subtitle">Defend Earth against waves of invaders.</p>
+        <p>
+          Controls: <kbd>←</kbd>/<kbd>→</kbd> or <kbd>A</kbd>/<kbd>D</kbd> to move · <kbd>Space</kbd> to shoot · <kbd>P</kbd> to pause · <kbd>M</kbd> to mute
+        </p>
+        <p class="small">Click "Start" (or press <kbd>Enter</kbd>) to begin. Audio will start after your first interaction.</p>
+        <button class="btn" id="startBtn">🚀 Start</button>
+      </div>
+      <div class="panel hidden" id="gameOverPanel">
+        <h2 class="title" id="gameOverTitle">Game Over</h2>
+        <p class="subtitle" id="gameOverSubtitle">Press <kbd>R</kbd> to play again.</p>
+        <button class="btn" id="playAgainBtn">Play Again</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+(() => {
+  // ====== Utility ======
+  const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
+  const now = () => performance.now() / 1000;
+
+  // ====== Canvas ======
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+
+  // ====== HUD Elements ======
+  const scoreEl = document.getElementById('score');
+  const livesEl = document.getElementById('lives');
+  const levelEl = document.getElementById('level');
+  const overlay = document.getElementById('overlay');
+  const startPanel = document.getElementById('startPanel');
+  const gameOverPanel = document.getElementById('gameOverPanel');
+  const gameOverTitle = document.getElementById('gameOverTitle');
+  const gameOverSubtitle = document.getElementById('gameOverSubtitle');
+  const startBtn = document.getElementById('startBtn');
+  const playAgainBtn = document.getElementById('playAgainBtn');
+  const muteBtn = document.getElementById('muteBtn');
+  const pauseBtn = document.getElementById('pauseBtn');
+  const restartBtn = document.getElementById('restartBtn');
+
+  // ====== Input ======
+  const keys = new Set();
+  window.addEventListener('keydown', (e) => {
+    const handled = ['ArrowLeft','ArrowRight','Space','KeyA','KeyD'];
+    if (handled.includes(e.code)) e.preventDefault();
+    keys.add(e.code);
+    if (e.code === 'Enter' && game.state === 'ready') beginGame();
+    if (e.code === 'KeyP') togglePause();
+    if (e.code === 'KeyM') toggleMute();
+    if (e.code === 'KeyR') restart();
+  });
+  window.addEventListener('keyup', (e) => keys.delete(e.code));
+
+  // ====== Audio (WebAudio, synthesized beeps) ======
+  let audioCtx = null;
+  let masterGain = null;
+  let muted = false;
+  function ensureAudio() {
+    if (!audioCtx) {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      masterGain = audioCtx.createGain();
+      masterGain.gain.value = 0.35; // master volume
+      masterGain.connect(audioCtx.destination);
+    }
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+  }
+  function toggleMute() {
+    muted = !muted;
+    muteBtn.textContent = muted ? '🔇 Muted' : '🔊 Sound';
+    muteBtn.setAttribute('aria-pressed', String(!muted));
+  }
+  function playTone({freq=440, type='square', duration=0.1, gain=0.2, slideTo=null, attack=0.005, release=0.06}) {
+    if (muted) return;
+    ensureAudio();
+    const t0 = audioCtx.currentTime;
+    const osc = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, t0);
+    if (slideTo) {
+      osc.frequency.exponentialRampToValueAtTime(Math.max(1, slideTo), t0 + duration);
+    }
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.linearRampToValueAtTime(gain, t0 + attack);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + duration + release);
+    osc.connect(g).connect(masterGain);
+    osc.start(t0);
+    osc.stop(t0 + duration + release + 0.02);
+  }
+  const Sounds = {
+    shoot: () => playTone({freq: 700, type:'square', duration: 0.08, gain: 0.18}),
+    invaderStep: (n=0) => playTone({freq: [240, 210, 190, 170][n%4], type:'sawtooth', duration: 0.07, gain: 0.14}),
+    enemyShoot: () => playTone({freq: 160, type:'triangle', duration: 0.06, gain: 0.16}),
+    invaderHit: () => playTone({freq: 220, slideTo: 80, type:'sawtooth', duration: 0.18, gain: 0.22}),
+    playerHit: () => playTone({freq: 120, slideTo: 50, type:'square', duration: 0.25, gain: 0.24}),
+    win: () => [0,1,2,3].forEach(i=> setTimeout(()=> playTone({freq: 300 + i*120, type:'square', duration:0.12, gain:0.2}), i*120)),
+    lose: () => [0,1,2].forEach(i=> setTimeout(()=> playTone({freq: 180 - i*40, type:'triangle', duration:0.2, gain:0.24}), i*150)),
+  };
+
+  // ====== Game State ======
+  const game = {
+    state: 'ready', // ready | playing | paused | over | win
+    score: 0,
+    lives: 3,
+    level: 1,
+    lastTime: 0,
+    flashTime: 0,
+    invaders: [],
+    bullets: [],
+    enemyBullets: [],
+    invaderDir: 1,
+    invaderSpeed: 28,
+    invaderStepTimer: 0,
+    invaderStepIndex: 0,
+    enemyShootTimer: 0,
+    player: { x: canvas.width/2, y: canvas.height - 50, w: 44, h: 20, speed: 320, cooldown: 0, invincible: 0 },
+  };
+
+  function setHUD() {
+    scoreEl.textContent = game.score;
+    livesEl.textContent = game.lives;
+    levelEl.textContent = game.level;
+  }
+
+  function resetLevel() {
+    game.invaders.length = 0;
+    const rows = 5 + Math.min(3, game.level-1); // slightly more rows on later levels
+    const cols = 10;
+    const startX = 80, startY = 80;
+    const spacingX = 60, spacingY = 46;
+    for (let r=0; r<rows; r++) {
+      for (let c=0; c<cols; c++) {
+        game.invaders.push({
+          x: startX + c*spacingX,
+          y: startY + r*spacingY,
+          w: 36, h: 24,
+          alive: true,
+          score: 10 + (rows-1-r)*10, // higher rows worth more
+        });
+      }
+    }
+    game.invaderDir = 1;
+    game.invaderSpeed = 24 + (game.level-1)*6;
+    game.invaderStepTimer = 0;
+    game.invaderStepIndex = 0;
+    game.enemyShootTimer = 0.8;
+    game.bullets.length = 0;
+    game.enemyBullets.length = 0;
+    game.player.x = canvas.width/2;
+    game.player.cooldown = 0;
+    game.player.invincible = 0.8;
+  }
+
+  function beginGame() {
+    overlay.classList.add('hidden');
+    startPanel.classList.add('hidden');
+    gameOverPanel.classList.add('hidden');
+    if (!audioCtx) ensureAudio();
+    game.state = 'playing';
+    game.score = 0; game.lives = 3; game.level = 1;
+    resetLevel();
+    setHUD();
+    game.lastTime = now();
+    requestAnimationFrame(loop);
+  }
+
+  function togglePause() {
+    if (game.state === 'playing') { game.state = 'paused'; showPauseOverlay(true); }
+    else if (game.state === 'paused') { game.state = 'playing'; showPauseOverlay(false); game.lastTime = now(); requestAnimationFrame(loop); }
+  }
+
+  function showPauseOverlay(show) {
+    if (show) {
+      overlay.classList.remove('hidden');
+      startPanel.classList.add('hidden');
+      gameOverPanel.classList.remove('hidden');
+      gameOverTitle.textContent = 'Paused';
+      gameOverSubtitle.innerHTML = 'Press <kbd>P</kbd> to resume.';
+      playAgainBtn.classList.add('hidden');
+    } else {
+      overlay.classList.add('hidden');
+      playAgainBtn.classList.remove('hidden');
+      gameOverPanel.classList.add('hidden');
+    }
+  }
+
+  function restart() {
+    if (game.state === 'ready') return;
+    overlay.classList.add('hidden');
+    gameOverPanel.classList.add('hidden');
+    game.state = 'playing';
+    game.score = 0; game.lives = 3; game.level = 1; setHUD();
+    resetLevel();
+    game.lastTime = now();
+    requestAnimationFrame(loop);
+  }
+
+  // ====== Entities ======
+  function shoot() {
+    const p = game.player;
+    if (p.cooldown > 0) return;
+    // Allow up to 1 player bullet on screen
+    const activePlayerBullets = game.bullets.filter(b => b.from === 'player').length;
+    if (activePlayerBullets >= 1) return;
+    game.bullets.push({ x: p.x, y: p.y - p.h/2, w: 4, h: 12, vy: -520, from: 'player' });
+    p.cooldown = 0.35;
+    Sounds.shoot();
+  }
+
+  function enemyShoot() {
+    const columns = new Map();
+    for (const inv of game.invaders) {
+      if (!inv.alive) continue;
+      const col = Math.round((inv.x - 80) / 60);
+      const curr = columns.get(col);
+      if (!curr || inv.y > curr.y) columns.set(col, inv); // keep bottom-most alive per column
+    }
+    const choices = [...columns.values()];
+    if (choices.length === 0) return;
+    const inv = choices[Math.floor(Math.random() * choices.length)];
+    game.enemyBullets.push({ x: inv.x, y: inv.y + inv.h/2, w: 4, h: 12, vy: 240 + Math.random()*80, from: 'enemy' });
+    Sounds.enemyShoot();
+  }
+
+  function aabb(a,b) { return Math.abs(a.x - b.x) < (a.w + b.w)/2 && Math.abs(a.y - b.y) < (a.h + b.h)/2; }
+
+  // ====== Loop ======
+  function loop() {
+    if (game.state !== 'playing') return;
+    const t = now();
+    const dt = Math.min(0.033, t - game.lastTime); // clamp delta for stability
+    game.lastTime = t;
+
+    update(dt);
+    render();
+
+    requestAnimationFrame(loop);
+  }
+
+  function update(dt) {
+    // Player move
+    const p = game.player;
+    let dx = 0;
+    if (keys.has('ArrowLeft') || keys.has('KeyA')) dx -= 1;
+    if (keys.has('ArrowRight') || keys.has('KeyD')) dx += 1;
+    p.x += dx * p.speed * dt;
+    p.x = clamp(p.x, 20, canvas.width - 20);
+
+    if ((keys.has('Space'))) shoot();
+    if (p.cooldown > 0) p.cooldown -= dt;
+    if (p.invincible > 0) p.invincible -= dt;
+
+    // Invader movement (group bounds + bounce)
+    const alive = game.invaders.filter(v => v.alive);
+    if (alive.length === 0) {
+      // Level clear
+      game.level += 1; setHUD(); Sounds.win();
+      resetLevel();
+    } else {
+      const minX = Math.min(...alive.map(v => v.x - v.w/2));
+      const maxX = Math.max(...alive.map(v => v.x + v.w/2));
+      const groupSpeed = game.invaderSpeed + (1 - alive.length / (game.invaders.length || 1)) * 80; // speed up as they die
+      const moveX = groupSpeed * game.invaderDir * dt;
+
+      // Edge bounce
+      let bounced = false;
+      if (maxX + moveX > canvas.width - 20 || minX + moveX < 20) {
+        game.invaderDir *= -1; bounced = true;
+        for (const inv of alive) inv.y += 18; // step down
+        game.invaderStepIndex++;
+        Sounds.invaderStep(game.invaderStepIndex);
+      } else {
+        for (const inv of alive) inv.x += moveX;
+        // Step tick sound periodically as they march
+        game.invaderStepTimer -= dt;
+        if (game.invaderStepTimer <= 0) {
+          Sounds.invaderStep(game.invaderStepIndex++);
+          game.invaderStepTimer = Math.max(0.08, 0.5 - (groupSpeed/160));
+        }
+      }
+
+      // Lose if invaders reach bottom
+      for (const inv of alive) {
+        if (inv.y + inv.h/2 >= p.y - p.h && game.state === 'playing') {
+          loseLife();
+          break;
+        }
+      }
+    }
+
+    // Enemy shooting AI timer
+    game.enemyShootTimer -= dt;
+    const shootInterval = Math.max(0.35, 1.2 - game.level*0.06);
+    if (game.enemyShootTimer <= 0) { enemyShoot(); game.enemyShootTimer = shootInterval + Math.random()*0.6; }
+
+    // Update bullets (player)
+    for (const b of game.bullets) b.y += b.vy * dt;
+    // Bullets collide with invaders
+    for (const b of game.bullets) {
+      if (b.from !== 'player') continue;
+      for (const inv of game.invaders) {
+        if (!inv.alive) continue;
+        if (aabb(b, inv)) {
+          inv.alive = false; b.y = -9999; // remove bullet
+          game.score += inv.score; setHUD();
+          Sounds.invaderHit();
+          break;
+        }
+      }
+    }
+    // Cull offscreen player bullets
+    game.bullets = game.bullets.filter(b => b.y + b.h/2 > 0);
+
+    // Enemy bullets
+    for (const b of game.enemyBullets) b.y += b.vy * dt;
+    // Collide with player
+    for (const b of game.enemyBullets) {
+      if (aabb(b, p) && p.invincible <= 0) {
+        b.y = 9999; // remove
+        loseLife();
+        break;
+      }
+    }
+    // Cull offscreen enemy bullets
+    game.enemyBullets = game.enemyBullets.filter(b => b.y - b.h/2 < canvas.height + 4);
+
+    // Flash timer
+    if (game.flashTime > 0) game.flashTime -= dt;
+  }
+
+  function loseLife() {
+    Sounds.playerHit();
+    game.lives -= 1; setHUD();
+    game.flashTime = 0.25;
+    game.player.invincible = 1.2;
+    game.player.x = canvas.width/2; game.player.cooldown = 0;
+    game.bullets.length = 0; game.enemyBullets.length = 0;
+    if (game.lives <= 0) {
+      endGame(false);
+    }
+  }
+
+  function endGame(won) {
+    game.state = 'over';
+    overlay.classList.remove('hidden');
+    startPanel.classList.add('hidden');
+    gameOverPanel.classList.remove('hidden');
+    if (won) { gameOverTitle.textContent = 'You Win!'; gameOverSubtitle.textContent = `Final score: ${game.score}`; Sounds.win(); }
+    else { gameOverTitle.textContent = 'Game Over'; gameOverSubtitle.textContent = `Final score: ${game.score}`; Sounds.lose(); }
+  }
+
+  // ====== Rendering ======
+  function drawShip(x,y,w,h, color='#64f4ac') {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.fillStyle = color;
+    // simple pixel-art like ship
+    const pts = [
+      [-w*0.5, 0], [-w*0.35, -h*0.2], [-w*0.2, -h*0.45], [0, -h*0.5], [w*0.2, -h*0.45], [w*0.35, -h*0.2], [w*0.5, 0], [w*0.35, h*0.2], [w*0.2, h*0.3], [-w*0.2, h*0.3], [-w*0.35, h*0.2]
+    ];
+    ctx.beginPath();
+    ctx.moveTo(pts[0][0], pts[0][1]);
+    for (let i=1;i<pts.length;i++) ctx.lineTo(pts[i][0], pts[i][1]);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = '#0b0f1e';
+    ctx.fillRect(-2, -h*0.48, 4, h*0.18); // cockpit
+    ctx.restore();
+  }
+
+  function drawInvader(x,y,w,h, alive=true) {
+    if (!alive) return;
+    ctx.save(); ctx.translate(x,y); ctx.fillStyle = '#7fd1ff';
+    // blocky alien
+    const bw = Math.round(w/6), bh = Math.round(h/6);
+    const pixels = [
+      '001110',
+      '011111',
+      '110011',
+      '111111',
+      '101101',
+      '100001',
+    ];
+    for (let r=0; r<pixels.length; r++) {
+      for (let c=0; c<pixels[r].length; c++) {
+        if (pixels[r][c] === '1') ctx.fillRect((c-3)*bw, (r-3)*bh, bw, bh);
+      }
+    }
+    ctx.restore();
+  }
+
+  function starfield(bgAlpha=0.15) {
+    // Subtle starfield background using random stars per frame for twinkle
+    ctx.fillStyle = `rgba(255,255,255,${bgAlpha})`;
+    for (let i=0;i<40;i++) {
+      const x = Math.random()*canvas.width;
+      const y = Math.random()*canvas.height;
+      ctx.fillRect(x, y, 1, 1);
+    }
+  }
+
+  function render() {
+    // Clear
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0,0,canvas.width,canvas.height);
+
+    // Starfield
+    starfield(0.10);
+
+    // Flash when hit
+    if (game.flashTime > 0) {
+      ctx.fillStyle = `rgba(255,80,80,${clamp(game.flashTime*3,0,0.4)})`;
+      ctx.fillRect(0,0,canvas.width,canvas.height);
+    }
+
+    // Draw player
+    const p = game.player;
+    if (!(game.state==='over' && game.lives<=0)) drawShip(p.x, p.y, p.w, p.h);
+
+    // Draw invaders
+    for (const inv of game.invaders) drawInvader(inv.x, inv.y, inv.w, inv.h, inv.alive);
+
+    // Draw bullets
+    ctx.fillStyle = '#f0f6ff';
+    for (const b of game.bullets) ctx.fillRect(b.x - b.w/2, b.y - b.h/2, b.w, b.h);
+    ctx.fillStyle = '#ff6b6b';
+    for (const b of game.enemyBullets) ctx.fillRect(b.x - b.w/2, b.y - b.h/2, b.w, b.h);
+
+    // Ground line
+    ctx.strokeStyle = '#1a2446';
+    ctx.beginPath(); ctx.moveTo(10, canvas.height-30); ctx.lineTo(canvas.width-10, canvas.height-30); ctx.stroke();
+
+    // Top HUD inside canvas
+    ctx.fillStyle = '#7aa2ff'; ctx.font = '16px monospace';
+    ctx.fillText(`Score ${game.score}`, 16, 22);
+    ctx.fillText(`Lives ${game.lives}`, 140, 22);
+    ctx.fillText(`Level ${game.level}`, 250, 22);
+
+    if (game.state === 'over') {
+      ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(0,0,canvas.width,canvas.height);
+      ctx.fillStyle = '#e9eef7';
+      ctx.textAlign = 'center';
+      ctx.font = '36px monospace';
+      ctx.fillText(game.lives<=0 ? 'GAME OVER' : 'YOU WIN!', canvas.width/2, canvas.height/2 - 20);
+      ctx.font = '20px monospace';
+      ctx.fillText(`Final score: ${game.score}`, canvas.width/2, canvas.height/2 + 12);
+      ctx.fillText('Press R to restart', canvas.width/2, canvas.height/2 + 40);
+    }
+  }
+
+  // ====== UI Buttons ======
+  startBtn.addEventListener('click', beginGame);
+  playAgainBtn.addEventListener('click', () => { if (game.state==='paused') togglePause(); else restart(); });
+  muteBtn.addEventListener('click', toggleMute);
+  pauseBtn.addEventListener('click', togglePause);
+  restartBtn.addEventListener('click', restart);
+
+  // Keep overlay visible initially
+  overlay.classList.remove('hidden');
+  startPanel.classList.remove('hidden');
+  gameOverPanel.classList.add('hidden');
+
+  // Accessibility: space to click Start when focused on page
+  document.addEventListener('keydown', (e) => {
+    if (game.state==='ready' && (e.code==='Enter')) beginGame();
+  });
+
+})();
+</script>
+<footer>www.perplex.click</footer>
+</body>
+</html>
